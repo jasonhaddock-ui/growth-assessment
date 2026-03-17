@@ -599,7 +599,7 @@ export default function App() {
               <p style={{fontFamily:"Georgia,serif",fontSize:15,lineHeight:1.85,color:"#e2e8f0",margin:"0 0 24px"}}>
                 Thirty minutes. You bring your context, the history, the constraints, the politics. I bring 20 years of building and diagnosing programs like yours. No slides. No pitch. Just an honest conversation about your program and where it goes from here.
               </p>
-              <button style={{background:"#2B6CB0",color:"#fff",border:"none",borderRadius:8,padding:"14px 28px",fontSize:15,fontFamily:SN,fontWeight:600,cursor:"pointer"}}>
+              <button onClick={() => window.open("https://calendly.com/jason-haddock-hbej/30min", "_blank")} style={{background:"#2B6CB0",color:"#fff",border:"none",borderRadius:8,padding:"14px 28px",fontSize:15,fontFamily:SN,fontWeight:600,cursor:"pointer"}}>
                 Let's Talk About Your Program
               </button>
             </div>
