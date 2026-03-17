@@ -82,11 +82,12 @@ function focusAreas(ans, n=5) {
   }).filter(x=>x.score>0).sort((a,b)=>b.score-a.score).slice(0,n).map(x=>x.i);
 }
 
-// CALL 1a: first two narrative sections
-function buildNarrativePrompt1(ans, sc) {
+// CALL 1: narrative sections
+function buildNarrativePrompt(ans, sc, fi) {
   const allA = Q.map((q,i)=>
     `Q${q.n} (${q.p}, ${q.w}x): "${q.t}" - Answer ${LETTERS[ans[i]]}: "${q.a[ans[i]]}"`
   ).join("\n");
+  const focTitles = fi.map(i=>`Q${Q[i].n}: "${Q[i].t}"`).join(", ");
   const pil = PILLARS.map(p=>`${p}: ${sc.pillar[p]}/100`).join(" | ");
   return `You are an experimentation program consultant with 20+ years of experience. Direct, empathetic, authoritative. No hedging. No flattery. Second person throughout. No bullet points. No em dashes.
 
@@ -98,34 +99,15 @@ PILLAR SCORES: ${pil}
 ALL ANSWERS:
 ${allA}
 
-Write EXACTLY these two sections:
+PRIORITY FOCUS AREAS (titles only, for reference): ${focTitles}
+
+Write EXACTLY these four sections:
 
 ## What Your Score Reveals
 Exactly 3 sentences. Sentence 1: state their score and maturity stage by name. Sentence 2: describe what the specific combination of high and low answers reveals. Sentence 3: one honest observation about what this pattern means at this stage.
 
 ## The Pattern in Your Program
 Exactly 4 sentences. Identify the single systemic pattern running through all their answers that they probably cannot name themselves. Reference specific question titles. Be precise. Make them say "that is exactly what we are dealing with."
-
-No bullet points. No em dashes. Every sentence must be specific to this person's actual answers.`;
-}
-
-// CALL 1b: last two narrative sections
-function buildNarrativePrompt2(ans, sc) {
-  const allA = Q.map((q,i)=>
-    `Q${q.n} (${q.p}, ${q.w}x): "${q.t}" - Answer ${LETTERS[ans[i]]}: "${q.a[ans[i]]}"`
-  ).join("\n");
-  const pil = PILLARS.map(p=>`${p}: ${sc.pillar[p]}/100`).join(" | ");
-  return `You are an experimentation program consultant with 20+ years of experience. Direct, empathetic, authoritative. No hedging. No flattery. Second person throughout. No bullet points. No em dashes.
-
-A marketing leader completed a 20-question experimentation maturity assessment.
-
-OVERALL SCORE: ${sc.overall}/100
-PILLAR SCORES: ${pil}
-
-ALL ANSWERS:
-${allA}
-
-Write EXACTLY these two sections:
 
 ## Where You Are Strong
 Exactly 2 sentences. Name 1 to 2 genuine strengths visible in their answers. Reference actual question titles. Do not flatter.
@@ -245,12 +227,10 @@ export default function App() {
 
   // stream a single API call, appending text via a setter callback
   async function streamCall(prompt, onChunk, maxTokens=800) {
-    const res = await fetch("https://api.anthropic.com/v1/messages", {
+    const res = await fetch("/api/proxy", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "anthropic-version": "2023-06-01",
-        "anthropic-dangerous-direct-browser-access": "true",
       },
       body: JSON.stringify({
         model: "claude-sonnet-4-20250514",
@@ -293,7 +273,7 @@ export default function App() {
       setLoadingNarrative(true);
       let flipped = false;
       await streamCall(
-        buildNarrativePrompt1(finalAns, s),
+        buildNarrativePrompt(finalAns, s, f),
         chunk => {
           if (!flipped) {
             flipped = true;
@@ -302,14 +282,7 @@ export default function App() {
           }
           setNarrative(p => p + chunk);
         },
-        1000
-      );
-
-      // CALL 1b: last two narrative sections
-      await streamCall(
-        buildNarrativePrompt2(finalAns, s),
-        chunk => { setNarrative(p => p + chunk); },
-        1000
+        2000
       );
       setLoadingNarrative(false);
 
@@ -626,10 +599,7 @@ export default function App() {
               <p style={{fontFamily:"Georgia,serif",fontSize:15,lineHeight:1.85,color:"#e2e8f0",margin:"0 0 24px"}}>
                 Thirty minutes. You bring your context, the history, the constraints, the politics. I bring 20 years of building and diagnosing programs like yours. No slides. No pitch. Just an honest conversation about your program and where it goes from here.
               </p>
-              <button
-                onClick={() => window.open("https://calendly.com/jason-haddock-hbej/30min", "_blank")}
-                style={{background:"#2B6CB0",color:"#fff",border:"none",borderRadius:8,padding:"14px 28px",fontSize:15,fontFamily:SN,fontWeight:600,cursor:"pointer"}}
-              >
+              <button style={{background:"#2B6CB0",color:"#fff",border:"none",borderRadius:8,padding:"14px 28px",fontSize:15,fontFamily:SN,fontWeight:600,cursor:"pointer"}}>
                 Let's Talk About Your Program
               </button>
             </div>
