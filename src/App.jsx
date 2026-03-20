@@ -82,7 +82,6 @@ function focusAreas(ans, n=5) {
   }).filter(x=>x.score>0).sort((a,b)=>b.score-a.score).slice(0,n).map(x=>x.i);
 }
 
-// CALL 1: narrative sections
 function buildNarrativePrompt(ans, sc, fi) {
   const allA = Q.map((q,i)=>
     `Q${q.n} (${q.p}, ${q.w}x): "${q.t}" - Answer ${LETTERS[ans[i]]}: "${q.a[ans[i]]}"`
@@ -118,7 +117,6 @@ Exactly 3 sentences. Frame honestly what a 20-question tool cannot do that a rea
 No bullet points. No em dashes. Every sentence must be specific to this person's actual answers.`;
 }
 
-// CALL 2: single focus area
 function buildFocusPrompt(ans, sc, qIdx) {
   const q = Q[qIdx];
   const pil = PILLARS.map(p=>`${p}: ${sc.pillar[p]}/100`).join(" | ");
@@ -221,11 +219,17 @@ export default function App() {
   const [loadingNarrative, setLoadingNarrative] = useState(false);
   const [loadingFocus, setLoadingFocus] = useState(false);
   const [loadingFocusIdx, setLoadingFocusIdx] = useState(-1);
+  const [firstName, setFirstName] = useState("");
+  const [lastName, setLastName] = useState("");
+  const [email, setEmail] = useState("");
+  const [captureSubmitting, setCaptureSubmitting] = useState(false);
+  const [captureSubmitted, setCaptureSubmitted] = useState(false);
+  const [captureError, setCaptureError] = useState("");
   const topRef = useRef(null);
+  const reportRef = useRef(null);
   const SN = "'system-ui',sans-serif";
   const BASE = {fontFamily:"Georgia,serif",background:"#f4f2ee",minHeight:"100vh",color:"#1a202c"};
 
-  // stream a single API call, appending text via a setter callback
   async function streamCall(prompt, onChunk, maxTokens=800) {
     const res = await fetch("/api/proxy", {
       method: "POST",
@@ -261,6 +265,85 @@ export default function App() {
     }
   }
 
+  async function handleCaptureSubmit(e) {
+    e.preventDefault();
+    if (!firstName.trim() || !lastName.trim() || !email.trim()) {
+      setCaptureError("Please fill in all fields.");
+      return;
+    }
+    setCaptureError("");
+    setCaptureSubmitting(true);
+
+    try {
+      if (!window.html2canvas) {
+        await new Promise((resolve, reject) => {
+          const s = document.createElement("script");
+          s.src = "https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js";
+          s.onload = resolve; s.onerror = reject;
+          document.head.appendChild(s);
+        });
+      }
+      if (!window.jspdf) {
+        await new Promise((resolve, reject) => {
+          const s = document.createElement("script");
+          s.src = "https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js";
+          s.onload = resolve; s.onerror = reject;
+          document.head.appendChild(s);
+        });
+      }
+      const element = reportRef.current;
+      const canvas = await window.html2canvas(element, {
+        scale: 1.5, useCORS: true, logging: false, backgroundColor: "#f4f2ee",
+      });
+      const { jsPDF } = window.jspdf;
+      const pdf = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
+      const pageWidth = pdf.internal.pageSize.getWidth();
+      const pageHeight = pdf.internal.pageSize.getHeight();
+      const margin = 10;
+      const contentWidth = pageWidth - margin * 2;
+      const imgHeight = (canvas.height * contentWidth) / canvas.width;
+      let yOffset = 0;
+      let firstPage = true;
+      while (yOffset < imgHeight) {
+        if (!firstPage) pdf.addPage();
+        const sliceHeight = Math.min(pageHeight - margin * 2, imgHeight - yOffset);
+        const srcY = (yOffset / imgHeight) * canvas.height;
+        const srcH = (sliceHeight / imgHeight) * canvas.height;
+        const sliceCanvas = document.createElement("canvas");
+        sliceCanvas.width = canvas.width;
+        sliceCanvas.height = srcH;
+        const ctx = sliceCanvas.getContext("2d");
+        ctx.drawImage(canvas, 0, srcY, canvas.width, srcH, 0, 0, canvas.width, srcH);
+        const imgData = sliceCanvas.toDataURL("image/jpeg", 0.92);
+        pdf.addImage(imgData, "JPEG", margin, margin, contentWidth, sliceHeight);
+        yOffset += sliceHeight;
+        firstPage = false;
+      }
+      pdf.save(`Experimentation-Maturity-Report-${stage(sc.overall).label}.pdf`);
+    } catch (pdfErr) {
+      console.error("PDF generation failed:", pdfErr);
+    }
+
+    try {
+      await fetch("/api/subscribe", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          firstName: firstName.trim(),
+          lastName: lastName.trim(),
+          email: email.trim(),
+          maturityTier: stage(sc.overall).label,
+          overallScore: sc.overall,
+        }),
+      });
+    } catch (mcErr) {
+      console.error("Mailchimp error:", mcErr);
+    }
+
+    setCaptureSubmitting(false);
+    setCaptureSubmitted(true);
+  }
+
   async function generate(finalAns) {
     const s = score(finalAns);
     const f = focusAreas(finalAns);
@@ -269,7 +352,6 @@ export default function App() {
     setNarrative(""); setFocusRecs([]);
 
     try {
-      // CALL 1: narrative sections — flip to report on first chunk
       setLoadingNarrative(true);
       let flipped = false;
       await streamCall(
@@ -286,7 +368,6 @@ export default function App() {
       );
       setLoadingNarrative(false);
 
-      // CALL 2: one call per focus area, sequentially
       setLoadingFocus(true);
       for (let k = 0; k < f.length; k++) {
         setLoadingFocusIdx(k);
@@ -324,6 +405,8 @@ export default function App() {
     setStep("intro"); setCur(0); setAns(Array(20).fill(null));
     setSc(null); setFi([]); setNarrative(""); setFocusRecs([]);
     setLoadingNarrative(false); setLoadingFocus(false); setLoadingFocusIdx(-1);
+    setFirstName(""); setLastName(""); setEmail("");
+    setCaptureSubmitted(false); setCaptureSubmitting(false); setCaptureError("");
   }
 
   // INTRO
@@ -430,7 +513,7 @@ export default function App() {
 
   return (
     <div style={{...BASE,padding:"40px 20px"}} ref={topRef}>
-      <div style={{maxWidth:740,margin:"0 auto"}}>
+      <div style={{maxWidth:740,margin:"0 auto"}} ref={reportRef}>
         <div style={{fontFamily:SN,fontSize:10,letterSpacing:4,color:"#8896a7",textTransform:"uppercase",marginBottom:24}}>Growth Systems - Diagnostic Report</div>
 
         {/* Score panel */}
@@ -511,7 +594,7 @@ export default function App() {
           </div>
         </div>
 
-        {/* Narrative sections (Call 1) */}
+        {/* Narrative sections */}
         {loadingNarrative && narrativeSecs.length===0 && (
           <div style={{background:"#fff",border:"1px solid #e8edf2",borderRadius:16,padding:32,fontFamily:SN,fontSize:14,color:"#8896a7"}}>
             <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
@@ -546,7 +629,7 @@ export default function App() {
           );
         })}
 
-        {/* Focus area recommendations (Call 2 loop) */}
+        {/* Focus area recommendations */}
         {(loadingFocus || focusRecs.length > 0) && (
           <div style={{background:"#fff",border:"1px solid #e8edf2",borderRadius:16,padding:"26px 30px",marginBottom:16}}>
             <h2 style={{fontFamily:SN,fontSize:12,fontWeight:700,letterSpacing:1.5,textTransform:"uppercase",margin:"0 0 20px",color:"#1a202c"}}>
@@ -585,7 +668,7 @@ export default function App() {
           </div>
         )}
 
-        {/* Final CTA */}
+        {/* Final CTA + Email Capture */}
         {!loading && narrative.length > 0 && (
           <>
             <div style={{background:"#1a365d",border:"1px solid #2c5282",borderRadius:16,padding:"36px 32px",marginBottom:16}}>
@@ -596,13 +679,89 @@ export default function App() {
               <p style={{fontFamily:"Georgia,serif",fontSize:15,lineHeight:1.85,color:"#e2e8f0",margin:"0 0 12px"}}>
                 A 20-question assessment surfaces signals. It cannot show you the root causes beneath your gaps, the specific organizational dynamics at play, or the sequenced 90-day plan that would actually move your program forward.
               </p>
-              <p style={{fontFamily:"Georgia,serif",fontSize:15,lineHeight:1.85,color:"#e2e8f0",margin:"0 0 24px"}}>
+              <p style={{fontFamily:"Georgia,serif",fontSize:15,lineHeight:1.85,color:"#e2e8f0",margin:"0 0 0"}}>
                 Thirty minutes. You bring your context, the history, the constraints, the politics. I bring 20 years of building and diagnosing programs like yours. No slides. No pitch. Just an honest conversation about your program and where it goes from here.
               </p>
-              <button onClick={() => window.open("https://calendly.com/jason-haddock-hbej/30min", "_blank")} style={{background:"#2B6CB0",color:"#fff",border:"none",borderRadius:8,padding:"14px 28px",fontSize:15,fontFamily:SN,fontWeight:600,cursor:"pointer"}}>
-                Let's Talk About Your Program
-              </button>
             </div>
+
+            <div style={{background:"#fff",border:"1px solid #e8edf2",borderRadius:16,padding:"36px 32px",marginBottom:16}}>
+              {!captureSubmitted ? (
+                <>
+                  <div style={{fontFamily:SN,fontSize:10,fontWeight:700,letterSpacing:2,textTransform:"uppercase",color:"#2B6CB0",marginBottom:12}}>Get Your Report</div>
+                  <h2 style={{fontFamily:"Georgia,serif",fontSize:"clamp(18px,2.5vw,22px)",fontWeight:700,lineHeight:1.3,color:"#1a202c",margin:"0 0 10px"}}>
+                    Save a PDF of your personalized diagnostic report
+                  </h2>
+                  <p style={{fontFamily:SN,fontSize:13,color:"#718096",margin:"0 0 24px",lineHeight:1.6}}>
+                    Enter your details and your report downloads instantly as a PDF.
+                  </p>
+                  <form onSubmit={handleCaptureSubmit} style={{display:"flex",flexDirection:"column",gap:14}}>
+                    <div style={{display:"flex",gap:12,flexWrap:"wrap"}}>
+                      <div style={{flex:1,minWidth:140}}>
+                        <label style={{fontFamily:SN,fontSize:11,fontWeight:600,color:"#4a5568",display:"block",marginBottom:5}}>First Name</label>
+                        <input
+                          type="text" value={firstName}
+                          onChange={e=>setFirstName(e.target.value)}
+                          placeholder="Jane"
+                          style={{width:"100%",padding:"10px 12px",border:"1.5px solid #e2e8f0",borderRadius:7,fontFamily:SN,fontSize:14,color:"#2d3748",outline:"none",boxSizing:"border-box"}}
+                          required
+                        />
+                      </div>
+                      <div style={{flex:1,minWidth:140}}>
+                        <label style={{fontFamily:SN,fontSize:11,fontWeight:600,color:"#4a5568",display:"block",marginBottom:5}}>Last Name</label>
+                        <input
+                          type="text" value={lastName}
+                          onChange={e=>setLastName(e.target.value)}
+                          placeholder="Smith"
+                          style={{width:"100%",padding:"10px 12px",border:"1.5px solid #e2e8f0",borderRadius:7,fontFamily:SN,fontSize:14,color:"#2d3748",outline:"none",boxSizing:"border-box"}}
+                          required
+                        />
+                      </div>
+                    </div>
+                    <div>
+                      <label style={{fontFamily:SN,fontSize:11,fontWeight:600,color:"#4a5568",display:"block",marginBottom:5}}>Work Email</label>
+                      <input
+                        type="email" value={email}
+                        onChange={e=>setEmail(e.target.value)}
+                        placeholder="jane@company.com"
+                        style={{width:"100%",padding:"10px 12px",border:"1.5px solid #e2e8f0",borderRadius:7,fontFamily:SN,fontSize:14,color:"#2d3748",outline:"none",boxSizing:"border-box"}}
+                        required
+                      />
+                    </div>
+                    {captureError && (
+                      <div style={{fontFamily:SN,fontSize:12,color:"#C53030",padding:"8px 12px",background:"#FFF5F5",borderRadius:6,border:"1px solid #FC8181"}}>{captureError}</div>
+                    )}
+                    <button
+                      type="submit"
+                      disabled={captureSubmitting}
+                      style={{background:captureSubmitting?"#718096":"#1a365d",color:"#fff",border:"none",borderRadius:8,padding:"13px 28px",fontSize:15,fontFamily:SN,fontWeight:600,cursor:captureSubmitting?"not-allowed":"pointer",alignSelf:"flex-start"}}
+                    >
+                      {captureSubmitting ? "Generating your PDF..." : "Get My Report"}
+                    </button>
+                    <p style={{fontFamily:SN,fontSize:11,color:"#a0aec0",margin:0,lineHeight:1.5}}>
+                      No spam. You'll hear from me when it's relevant to your program.
+                    </p>
+                  </form>
+                </>
+              ) : (
+                <div style={{textAlign:"center",padding:"12px 0"}}>
+                  <div style={{fontSize:36,marginBottom:14}}>✓</div>
+                  <h3 style={{fontFamily:"Georgia,serif",fontSize:20,fontWeight:700,color:"#276749",margin:"0 0 10px"}}>Your report is downloading now</h3>
+                  <p style={{fontFamily:SN,fontSize:14,color:"#718096",margin:"0 0 24px",lineHeight:1.6}}>
+                    Want to talk through what this means for your program?
+                  </p>
+                  <button
+                    onClick={() => window.open("https://calendly.com/jason-haddock-hbej/30min", "_blank")}
+                    style={{background:"#2B6CB0",color:"#fff",border:"none",borderRadius:8,padding:"14px 28px",fontSize:15,fontFamily:SN,fontWeight:600,cursor:"pointer",marginBottom:16}}
+                  >
+                    Book a 30-Minute Call
+                  </button>
+                  <p style={{fontFamily:SN,fontSize:12,color:"#a0aec0",margin:0}}>
+                    No pitch. Just an honest conversation about your program.
+                  </p>
+                </div>
+              )}
+            </div>
+
             <div style={{textAlign:"center",padding:"20px 0 48px"}}>
               <button onClick={restart} style={{background:"none",border:"1px solid #e2e8f0",borderRadius:8,padding:"11px 22px",fontSize:13,fontFamily:SN,cursor:"pointer",color:"#8896a7"}}>
                 Retake Assessment
